@@ -102,10 +102,10 @@ class DownloadFileManager with EventsEmittable<DownloadFileManagerEvent> {
         if (pieces == null) continue;
         if (flushed.add(file.filePath)) {
           await file.requestFlush();
-        }
-        if (file.completelyFlushed) {
-          //TODO: is this check enough ?
-          events.emit(DownloadManagerFileCompleted(file));
+          // Emit only once per file
+          if (file.completelyFlushed) {
+            events.emit(DownloadManagerFileCompleted(file));
+          }
         }
       }
     }

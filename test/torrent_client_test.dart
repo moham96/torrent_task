@@ -1,3 +1,5 @@
+@Timeout(Duration(seconds: 90))
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -10,6 +12,7 @@ import 'package:dtorrent_parser/dtorrent_parser.dart';
 import 'package:dtorrent_task/dtorrent_task.dart';
 import 'package:path/path.dart' as path;
 
+
 final testDirectory = path.join(
   Directory.current.path,
   Directory.current.path.endsWith('test') ? '' : 'test',
@@ -18,6 +21,8 @@ var torrentsPath =
     path.canonicalize(path.join(testDirectory, '..', '..', '..', 'torrents'));
 
 void main() {
+  var directory = path.canonicalize(path.join('..', 'tmp'));
+
   group('Bitfield test - ', () {
     Bitfield? bitfield;
     var pieces = 123; // Do not provide a number that is multiple of 8
@@ -170,7 +175,6 @@ void main() {
   });
 
   group('StateFile Test - ', () {
-    var directory = path.canonicalize(path.join('..', 'tmp'));
     Torrent? torrent;
     setUpAll(() async {
       torrent = await Torrent.parse(
@@ -256,15 +260,6 @@ void main() {
       await stateFile.delete(); //Deleting twice.
       assert(!await t.exists());
     });
-
-    test('Stop task test', () async {
-      assert(torrent != null, 'No torrent provided');
-      final newTask = TorrentTask.newTask(torrent!, directory);
-      await newTask.start();
-      assert(newTask.state == TaskState.running);
-      await newTask.stop();
-      assert(newTask.state == TaskState.stopped);
-    });
   });
 
   group('Temp file access - ', () {
@@ -294,6 +289,60 @@ void main() {
       await file.delete();
       file1 = File('test/test.txt');
       assert(!await file1.exists(), 'File deletion error.');
+    });
+  });
+
+  group('Task Tests', () {
+    Torrent? torrent;
+    setUpAll(() async {
+      torrent = await Torrent.parse(
+          path.join(torrentsPath, 'big-buck-bunny.torrent'));
+      var f = File(path.join(directory, '${torrent!.infoHash}.bt.state'));
+      if (await f.exists()) await f.delete();
+    });
+
+    test('Stop task test', () async {
+      assert(torrent != null, 'No torrent provided');
+      final newTask = TorrentTask.newTask(torrent!, directory);
+      await newTask.start();
+      assert(newTask.state == TaskState.running);
+      await newTask.stop();
+      assert(newTask.state == TaskState.stopped);
+      await newTask.dispose();
+    });
+    test('TaskFileCompleted test', () async {
+      assert(torrent != null, 'No torrent provided');
+      var countTaskFileCompleted = 0;
+      final newTask = TorrentTask.newTask(torrent!, directory);
+      final completer = Completer();
+      newTask.createListener().listen(
+            (event) {
+          switch (event.runtimeType) {
+            case TaskCompleted:
+              print('TaskCompleted');
+              completer.complete();
+              newTask.stop();
+              return;
+            case TaskFileCompleted:
+              countTaskFileCompleted++;
+              return;
+            case StateFileUpdated:
+              print('Downloaded: ${(newTask.progress * 100).round()}%');
+              return;
+            default:
+          }
+        },
+      );
+      await newTask.start();
+      await completer.future;
+      await newTask.stop();
+      final pathToFile = path.join(directory, '${torrent?.files.first.name}');
+      final file = File(pathToFile);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      await newTask.dispose();
+      assert(countTaskFileCompleted == torrent!.files.length, 'File can be completed only once');
     });
   });
 }
